@@ -2,8 +2,12 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "SnapPDF — PNG to PDF Converter",
-  description: "Convert PNG images to a PDF privately, right in your browser.",
+  title: "SnapPDF — Image to PDF Converter",
+  description: "Convert common image formats to PDF privately in your browser.",
+  icons: {
+    icon: "/logo.png",
+    apple: "/logo.png",
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

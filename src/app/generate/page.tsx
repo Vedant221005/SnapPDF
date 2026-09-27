@@ -2,20 +2,26 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowLeft, ArrowRight, CheckCircle2, Download, FileImage, FileText, Loader2, RotateCcw, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle2, Download, FileImage, FileText, RotateCcw, ShieldCheck } from "lucide-react";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { getPendingConversion } from "@/lib/conversion-store";
+import { clearPendingConversion, getPendingConversion, useConversionStore } from "@/lib/conversion-store";
 import { downloadBlob, generatePdf } from "@/lib/pdf-generator";
 import { formatBytes } from "@/lib/utils";
 import type { ImageFile, PDFSettings } from "@/types";
 
-const pageLabels = { a4: "A4", letter: "Letter", legal: "Legal" };
-const orientationLabels = { portrait: "Portrait", landscape: "Landscape" };
+const pageLabels = { auto: "Auto", a4: "A4", letter: "Letter", legal: "Legal" };
+const orientationLabels = { auto: "Auto", portrait: "Portrait", landscape: "Landscape" };
 
 interface Result { blob: Blob; pages: number; filename: string; }
+
+const PDFPreview = dynamic(
+  () => import("@/components/PDFPreview").then((module) => module.PDFPreview),
+  { ssr: false, loading: () => <div className="flex min-h-48 items-center justify-center rounded-2xl border border-border bg-muted/30 text-sm text-muted-foreground">Loading PDF preview...</div> },
+);
 
 export default function GeneratePage() {
   const router = useRouter();
@@ -23,6 +29,10 @@ export default function GeneratePage() {
   const [settings, setSettings] = useState<PDFSettings | null>(null);
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState("");
+  const [previewKey, setPreviewKey] = useState(0);
+  const setGeneratedPdf = useConversionStore((state) => state.setGeneratedPdf);
+  const generatedPdfUrl = useConversionStore((state) => state.generatedPdfUrl);
+  const totalPages = useConversionStore((state) => state.totalPages);
 
   useEffect(() => {
     const conversion = getPendingConversion();
@@ -35,16 +45,28 @@ export default function GeneratePage() {
     let cancelled = false;
     void generatePdf(conversion.images, conversion.settings)
       .then((blob) => {
-        if (!cancelled) setResult({ blob, pages: conversion.images.length, filename: "snappdf-converted.pdf" });
+        const filename = `${conversion.settings.filename.trim().replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-").replace(/\.pdf$/i, "") || "SnapPDF-Converted"}.pdf`;
+        if (!cancelled) {
+          const url = URL.createObjectURL(blob);
+          setGeneratedPdf(blob, url, conversion.images.length);
+          setResult({ blob, pages: conversion.images.length, filename });
+        }
       })
       .catch((reason: unknown) => {
         if (!cancelled) setError(reason instanceof Error ? reason.message : "Something went wrong while creating your PDF.");
       });
-    return () => { cancelled = true; };
-  }, []);
+    return () => {
+      cancelled = true;
+      const currentUrl = useConversionStore.getState().generatedPdfUrl;
+      if (currentUrl) URL.revokeObjectURL(currentUrl);
+    };
+  }, [setGeneratedPdf]);
 
   const startOver = () => {
     images.forEach((image) => URL.revokeObjectURL(image.previewUrl));
+    const currentUrl = useConversionStore.getState().generatedPdfUrl;
+    if (currentUrl) URL.revokeObjectURL(currentUrl);
+    clearPendingConversion();
     router.push("/");
   };
 
@@ -72,6 +94,7 @@ export default function GeneratePage() {
             <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Your PDF is ready</h1>
             <p className="mt-3 text-muted-foreground">Your images have been combined into one downloadable document.</p>
             <div className="mx-auto mt-8 flex max-w-md items-center gap-4 rounded-xl border border-border bg-muted/40 p-4 text-left"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><FileText className="h-5 w-5" /></div><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{result!.filename}</p><p className="mt-1 text-xs text-muted-foreground">{result!.pages} {result!.pages === 1 ? "page" : "pages"} · {formatBytes(result!.blob.size)}</p></div></div>
+            {generatedPdfUrl && <div className="mt-10 text-left"><h2 className="mb-3 text-lg font-semibold">PDF Preview</h2><PDFPreview key={previewKey} url={generatedPdfUrl} totalPages={totalPages || result!.pages} onPageCount={(pages) => useConversionStore.getState().setGeneratedPdf(result!.blob, generatedPdfUrl, pages)} onRetry={() => setPreviewKey((key) => key + 1)} /></div>}
             <div className="mx-auto mt-7 flex max-w-md flex-col gap-3"><Button size="lg" onClick={() => downloadBlob(result!.blob, result!.filename)}><Download className="h-5 w-5" /> Download PDF</Button><Button variant="outline" size="lg" onClick={startOver}>Convert Another File</Button></div>
             <p className="mt-7 flex items-center justify-center gap-1.5 text-xs text-muted-foreground"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Processed locally and securely in your browser</p>
           </Card>
